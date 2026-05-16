@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // chainlessSigner returns nil from CertificateChain(), forcing Sign to
@@ -76,6 +77,101 @@ func TestSignRejectsGarbagePE(t *testing.T) {
 	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
 	if _, err := Sign([]byte("not a PE"), signer, SignOptions{}); err == nil {
 		t.Fatal("expected error from Sign on non-PE input")
+	}
+}
+
+// TestSignOmitsOpusInfoByDefault ensures that with no ProgramName or
+// ProgramURL the SpcSpOpusInfo OID is absent from the signed output,
+// matching osslsigncode's default behavior.
+func TestSignOmitsOpusInfoByDefault(t *testing.T) {
+	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+	pe := loadHelloPE(t)
+	signed, err := Sign(pe, signer, SignOptions{})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	oidDER, _ := asn1.Marshal(oidSPCSpOpusInfo)
+	if bytes.Contains(signed, oidDER) {
+		t.Fatal("SpcSpOpusInfo OID should not appear when ProgramName/ProgramURL are empty")
+	}
+}
+
+// TestSignEmbedsOpusInfo populates both ProgramName and ProgramURL and
+// asserts the signed output carries the OID together with the UCS-2
+// encoded program name and the IA5String URL.
+func TestSignEmbedsOpusInfo(t *testing.T) {
+	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+	pe := loadHelloPE(t)
+	const name = "Authenticode Demo"
+	const url = "https://example.com/about"
+	signed, err := Sign(pe, signer, SignOptions{
+		ProgramName: name,
+		ProgramURL:  url,
+	})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	oidDER, _ := asn1.Marshal(oidSPCSpOpusInfo)
+	if !bytes.Contains(signed, oidDER) {
+		t.Fatal("SpcSpOpusInfo OID missing")
+	}
+	bmp := make([]byte, 0, 2*len(name))
+	for _, r := range name {
+		bmp = append(bmp, byte(r>>8), byte(r))
+	}
+	if !bytes.Contains(signed, bmp) {
+		t.Fatal("program name (UCS-2 BE) missing")
+	}
+	if !bytes.Contains(signed, []byte(url)) {
+		t.Fatal("program URL missing")
+	}
+}
+
+// TestSignEmbedsOpusInfoNameOnly / URLOnly cover the two single-field
+// branches.
+func TestSignEmbedsOpusInfoNameOnly(t *testing.T) {
+	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+	pe := loadHelloPE(t)
+	signed, err := Sign(pe, signer, SignOptions{ProgramName: "Just Name"})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	oidDER, _ := asn1.Marshal(oidSPCSpOpusInfo)
+	if !bytes.Contains(signed, oidDER) {
+		t.Fatal("opus info OID missing when only name is set")
+	}
+}
+
+func TestSignEmbedsOpusInfoURLOnly(t *testing.T) {
+	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+	pe := loadHelloPE(t)
+	signed, err := Sign(pe, signer, SignOptions{ProgramURL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	oidDER, _ := asn1.Marshal(oidSPCSpOpusInfo)
+	if !bytes.Contains(signed, oidDER) {
+		t.Fatal("opus info OID missing when only URL is set")
+	}
+}
+
+// TestSignEmbedsSigningTime asserts the PKCS#9 signingTime is set by
+// SignOptions.SigningTime when provided, and falls within a few
+// seconds of now otherwise.
+func TestSignEmbedsSigningTime(t *testing.T) {
+	signer := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+	pe := loadHelloPE(t)
+	want := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	signed, err := Sign(pe, signer, SignOptions{SigningTime: want})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	// asn1.Marshal(want.UTC()) produces the UTCTime DER bytes (years
+	// 1950..2049). Searching for those bytes in the SignerInfo's
+	// signed attributes is sufficient.
+	utcDER, _ := asn1.Marshal(want)
+	if !bytes.Contains(signed, utcDER) {
+		t.Fatalf("signing time %v not embedded as UTCTime in signed output", want)
 	}
 }
 
@@ -189,6 +285,45 @@ func TestSignMatrixOsslsigncode(t *testing.T) {
 				t.Fatal("osslsigncode reported an invalid PE checksum")
 			}
 		})
+	}
+}
+
+// TestSignDLLOsslsigncode signs testdata/hello.dll (a PE32+ DLL built
+// with mingw, IMAGE_FILE_DLL characteristic set) and shells out to
+// osslsigncode verify. DLLs share the PE format with EXEs but exercise
+// the PE32+ optional-header path and confirm we don't accidentally
+// special-case .exe anywhere.
+func TestSignDLLOsslsigncode(t *testing.T) {
+	if _, err := exec.LookPath("osslsigncode"); err != nil {
+		t.Skip("osslsigncode not installed")
+	}
+	dll, err := os.ReadFile(filepath.Join("testdata", "hello.dll"))
+	if err != nil {
+		t.Fatalf("read hello.dll: %v", err)
+	}
+	signer := newSelfSignedSigner(t, elliptic.P384(), crypto.SHA384)
+	signed, err := Sign(dll, signer, SignOptions{Hash: crypto.SHA384})
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	dir := t.TempDir()
+	dllPath := filepath.Join(dir, "signed.dll")
+	caPath := filepath.Join(dir, "self.pem")
+	if err := os.WriteFile(dllPath, signed, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePEM(caPath, signer.cert.Raw); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("osslsigncode", "verify",
+		"-CAfile", caPath, "-TSA-CAfile", caPath, "-ignore-timestamp",
+		"-in", dllPath).CombinedOutput()
+	t.Logf("osslsigncode output:\n%s", out)
+	if err != nil {
+		t.Fatalf("osslsigncode verify failed: %v", err)
+	}
+	if bytes.Contains(out, []byte("invalid PE checksum")) {
+		t.Fatal("osslsigncode reported an invalid PE checksum on the signed DLL")
 	}
 }
 

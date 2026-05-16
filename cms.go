@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"time"
 )
 
 // SignOptions configures the CMS signing operation.
@@ -30,6 +31,20 @@ type SignOptions struct {
 	// Context governs the TSA HTTP call. Defaults to
 	// context.Background().
 	Context context.Context
+
+	// SigningTime overrides the PKCS#9 signingTime attribute. Zero
+	// (the default) means time.Now() at signing — which is what
+	// signtool / osslsigncode do. Set explicitly only for reproducible
+	// builds or tests.
+	SigningTime time.Time
+
+	// ProgramName and ProgramURL populate the SpcSpOpusInfo signed
+	// attribute (signtool's "/d <name>" / "/du <url>"; osslsigncode's
+	// "-n <name>" / "-i <url>"). If both are empty the attribute is
+	// omitted entirely, matching osslsigncode's behavior — verifiers
+	// surface them as the publisher's display name / "more info" link.
+	ProgramName string
+	ProgramURL  string
 }
 
 // contentInfo wraps a CMS payload with a content-type OID. Content is
@@ -129,7 +144,11 @@ func BuildSignedData(spc []byte, signer crypto.Signer, chain []*x509.Certificate
 	messageDigest := hh.Sum(nil)
 
 	// Signed attributes.
-	signedAttrs, err := buildSignedAttrs(messageDigest)
+	st := opts.SigningTime
+	if st.IsZero() {
+		st = time.Now()
+	}
+	signedAttrs, err := buildSignedAttrs(messageDigest, st.UTC(), opts.ProgramName, opts.ProgramURL)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +228,7 @@ func BuildSignedData(spc []byte, signer crypto.Signer, chain []*x509.Certificate
 // buildSignedAttrs builds the SignedAttributes SET *as an IMPLICIT [0]
 // form* (tag 0xA0). The caller flips the tag to 0x31 to compute the
 // hash that gets signed.
-func buildSignedAttrs(messageDigest []byte) ([]byte, error) {
+func buildSignedAttrs(messageDigest []byte, signingTime time.Time, programName, programURL string) ([]byte, error) {
 	// Each attribute's Values is a SET (tag 0x31). encoding/asn1's
 	// `asn1:"set"` directive is ignored when we pass FullBytes, so we
 	// pre-wrap each value in SET ourselves.
@@ -232,10 +251,16 @@ func buildSignedAttrs(messageDigest []byte) ([]byte, error) {
 		Type:   oidMessageDigest,
 		Values: asn1.RawValue{FullBytes: tlv(0x31, mdVal)},
 	}
-	// SpcSpOpusInfo → SET { SEQUENCE {} } (empty)
-	opus := attribute{
-		Type:   oidSPCSpOpusInfo,
-		Values: asn1.RawValue{FullBytes: tlv(0x31, []byte{0x30, 0x00})},
+	// signingTime attribute → SET { UTCTime / GeneralizedTime }
+	// asn1.Marshal picks UTCTime for years 1950..2049 — which is what
+	// signtool / osslsigncode also emit.
+	stVal, err := asn1.Marshal(signingTime)
+	if err != nil {
+		return nil, err
+	}
+	signingTimeAttr := attribute{
+		Type:   oidSigningTime,
+		Values: asn1.RawValue{FullBytes: tlv(0x31, stVal)},
 	}
 	// SpcStatementType → SET { SEQUENCE OF OID { individualCodeSigning } }
 	stOIDDER, err := asn1.Marshal(oidSPCIndividualSPKey)
@@ -247,7 +272,17 @@ func buildSignedAttrs(messageDigest []byte) ([]byte, error) {
 		Values: asn1.RawValue{FullBytes: tlv(0x31, tlv(0x30, stOIDDER))},
 	}
 
-	attrs := []attribute{ct, md, opus, st}
+	attrs := []attribute{ct, md, signingTimeAttr, st}
+	if programName != "" || programURL != "" {
+		opusBody, err := buildSpcSpOpusInfo(programName, programURL)
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, attribute{
+			Type:   oidSPCSpOpusInfo,
+			Values: asn1.RawValue{FullBytes: tlv(0x31, opusBody)},
+		})
+	}
 	// DER requires SET OF elements to be sorted by their encoded byte
 	// representations.
 	encoded := make([][]byte, 0, len(attrs))

@@ -20,6 +20,7 @@ var (
 	oidSignedData    = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 7, 2} // id-signedData
 	oidContentType   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 3}
 	oidMessageDigest = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 4}
+	oidSigningTime   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 5}
 
 	// Microsoft's Authenticode-specific OID for an RFC 3161 counter
 	// signature carried as a SignerInfo unsigned attribute. The
@@ -166,6 +167,43 @@ func buildSpcPeImageData() ([]byte, error) {
 	flags := []byte{0x03, 0x01, 0x00}
 	body := append([]byte{}, flags...)
 	body = append(body, fileWrap...)
+	return tlv(0x30, body), nil
+}
+
+// buildSpcSpOpusInfo emits the SpcSpOpusInfo SEQUENCE used as the
+// value of the corresponding signed attribute. Both fields are
+// optional — the caller passes empty strings to omit them. Layout:
+//
+//	SpcSpOpusInfo ::= SEQUENCE {
+//	    programName  [0] EXPLICIT SpcString OPTIONAL,
+//	    moreInfo     [1] EXPLICIT SpcLink   OPTIONAL
+//	}
+//
+// SpcString is rendered as the unicode CHOICE alternative (BMPString,
+// UCS-2 big-endian, IMPLICIT [0]); SpcLink as the url CHOICE
+// alternative (IA5String, IMPLICIT [0]).
+func buildSpcSpOpusInfo(programName, programURL string) ([]byte, error) {
+	var body []byte
+	if programName != "" {
+		runes := []rune(programName)
+		bmp := make([]byte, 2*len(runes))
+		for i, r := range runes {
+			if r > 0xFFFF {
+				return nil, errors.New("authenticode: program name rune outside BMP")
+			}
+			binary.BigEndian.PutUint16(bmp[2*i:], uint16(r))
+		}
+		// SpcString CHOICE [0] IMPLICIT BMPString => tag 0x80, content = bmp.
+		spcString := tlv(0x80, bmp)
+		// programName [0] EXPLICIT SpcString.
+		body = append(body, tlv(0xA0, spcString)...)
+	}
+	if programURL != "" {
+		// SpcLink CHOICE [0] IMPLICIT IA5String url => tag 0x80, content = url.
+		spcLink := tlv(0x80, []byte(programURL))
+		// moreInfo [1] EXPLICIT SpcLink.
+		body = append(body, tlv(0xA1, spcLink)...)
+	}
 	return tlv(0x30, body), nil
 }
 
