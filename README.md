@@ -39,4 +39,4 @@ signed, err := authenticode.Sign(peBytes, signer, authenticode.SignOptions{
 
 ## License
 
-See `LICENSE`.
+MIT — see [`LICENSE`](LICENSE).
