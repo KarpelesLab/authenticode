@@ -1,5 +1,10 @@
 # authenticode
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/KarpelesLab/authenticode.svg)](https://pkg.go.dev/github.com/KarpelesLab/authenticode)
+[![CI](https://github.com/KarpelesLab/authenticode/actions/workflows/ci.yml/badge.svg)](https://github.com/KarpelesLab/authenticode/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/KarpelesLab/authenticode/badge.svg?branch=master)](https://coveralls.io/github/KarpelesLab/authenticode?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/KarpelesLab/authenticode)](https://goreportcard.com/report/github.com/KarpelesLab/authenticode)
+
 Pure-Go [Microsoft Authenticode](https://learn.microsoft.com/en-us/windows/win32/seccrypto/cryptography-tools) signing for Windows PE (`.exe` / `.dll`) files. No CGO, no `osslsigncode` shell-out, no PKCS#11 engine — just `encoding/asn1` and the standard `crypto.Signer` interface.
 
 ## What it does
