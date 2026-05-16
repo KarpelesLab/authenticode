@@ -274,7 +274,10 @@ func tlvValue(der []byte) ([]byte, error) {
 	l := int(der[1])
 	if l&0x80 != 0 {
 		nl := l & 0x7F
-		if nl == 0 || 2+nl > len(der) {
+		// Cap nl at 4 bytes: a single ASN.1 TLV bigger than 4 GiB is
+		// nothing we'll ever process here, and refusing keeps the
+		// multi-byte length from overflowing int on 32-bit builds.
+		if nl == 0 || nl > 4 || 2+nl > len(der) {
 			return nil, errors.New("bad long-form length")
 		}
 		l = 0
@@ -283,7 +286,7 @@ func tlvValue(der []byte) ([]byte, error) {
 		}
 		off = 2 + nl
 	}
-	if off+l > len(der) {
+	if l < 0 || off+l > len(der) {
 		return nil, errors.New("truncated TLV body")
 	}
 	return der[off : off+l], nil

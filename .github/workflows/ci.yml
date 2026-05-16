@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osslsigncode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osslsigncode
+          osslsigncode --version
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race + coverage)
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - name: Fuzz Parse (30s)
+        run: go test -run='^$' -fuzz=FuzzParse -fuzztime=30s .
+
+      - name: Fuzz tlvValue (15s)
+        run: go test -run='^$' -fuzz=FuzzTLVValue -fuzztime=15s .
+
+      - name: Upload fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-corpus-failures
+          path: testdata/fuzz
+          if-no-files-found: ignore

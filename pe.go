@@ -83,6 +83,23 @@ func Parse(raw []byte) (*PE, error) {
 	}
 	pe.certTableVA = binary.LittleEndian.Uint32(raw[pe.certDirEntryOff : pe.certDirEntryOff+4])
 	pe.certTableSize = binary.LittleEndian.Uint32(raw[pe.certDirEntryOff+4 : pe.certDirEntryOff+8])
+	// Reject cert-table pointers that don't fit in the file: they would
+	// signal a corrupt or partially-truncated image.
+	if pe.certTableVA != 0 {
+		ctEnd := uint64(pe.certTableVA) + uint64(pe.certTableSize)
+		if ctEnd > uint64(len(raw)) {
+			return nil, fmt.Errorf("authenticode: cert table VA+size past EOF (%d > %d)", ctEnd, len(raw))
+		}
+	}
+	// Cap the section count by what the file could plausibly hold; the
+	// PE spec also caps numSections at 96 for images.
+	maxSecs := (len(raw) - pe.sectionTableOffset) / 40
+	if maxSecs < 0 {
+		maxSecs = 0
+	}
+	if int(pe.numSections) > maxSecs {
+		pe.numSections = uint16(maxSecs)
+	}
 	return pe, nil
 }
 
@@ -90,17 +107,26 @@ func Parse(raw []byte) (*PE, error) {
 // PE image, omitting the four-byte file checksum, the eight-byte
 // attribute-certificate-table data-directory entry, and any existing
 // attribute certificate table contents.
+//
+// All offsets are clamped to [0, len(raw)] before slicing so a
+// malformed PE that survived Parse cannot panic here.
 func (p *PE) AuthenticodeDigest(h hash.Hash) []byte {
+	n := len(p.raw)
 	// Hash from start of file up to (but not including) the checksum.
 	h.Write(p.raw[:p.checksumOff])
 	// Skip 4 bytes (checksum).
 	// Continue from after checksum to start of cert-table dir entry.
 	h.Write(p.raw[p.checksumOff+4 : p.certDirEntryOff])
 	// Skip 8 bytes (cert table dir entry: VA + Size).
-	// Continue from after cert-dir entry to end of headers.
+	// Continue from after cert-dir entry to end of headers. SizeOfHeaders
+	// can be bogus: clamp it below by the offset we've already reached
+	// and above by file length.
 	end := int(p.sizeOfHeaders)
-	if end > len(p.raw) {
-		end = len(p.raw)
+	if end < p.certDirEntryOff+8 {
+		end = p.certDirEntryOff + 8
+	}
+	if end > n {
+		end = n
 	}
 	h.Write(p.raw[p.certDirEntryOff+8 : end])
 
@@ -111,7 +137,7 @@ func (p *PE) AuthenticodeDigest(h hash.Hash) []byte {
 	secs := make([]secRange, 0, p.numSections)
 	for i := 0; i < int(p.numSections); i++ {
 		sh := p.sectionTableOffset + i*40
-		if sh+40 > len(p.raw) {
+		if sh+40 > n {
 			break
 		}
 		size := int(binary.LittleEndian.Uint32(p.raw[sh+16 : sh+20])) // SizeOfRawData
@@ -119,14 +145,17 @@ func (p *PE) AuthenticodeDigest(h hash.Hash) []byte {
 		if size == 0 || off == 0 {
 			continue
 		}
+		if off >= n {
+			continue
+		}
 		secs = append(secs, secRange{off, size})
 	}
 	sort.Slice(secs, func(i, j int) bool { return secs[i].off < secs[j].off })
-	tailEnd := int(p.sizeOfHeaders)
+	tailEnd := end
 	for _, s := range secs {
-		if s.off+s.size > len(p.raw) {
+		if s.off+s.size > n {
 			h.Write(p.raw[s.off:])
-			tailEnd = len(p.raw)
+			tailEnd = n
 			continue
 		}
 		h.Write(p.raw[s.off : s.off+s.size])
@@ -134,20 +163,27 @@ func (p *PE) AuthenticodeDigest(h hash.Hash) []byte {
 			tailEnd = s.off + s.size
 		}
 	}
+	if tailEnd > n {
+		tailEnd = n
+	}
 	// Hash any trailing bytes outside the section table and outside the
 	// existing attribute certificate table (if any).
 	if p.certTableVA > 0 && p.certTableSize > 0 {
-		// Trailing bytes split into [tailEnd .. certTableVA) and
-		// [certTableVA+certTableSize .. EOF).
 		ctStart := int(p.certTableVA)
 		ctEnd := ctStart + int(p.certTableSize)
-		if ctStart > tailEnd && ctStart <= len(p.raw) {
+		if ctStart > n {
+			ctStart = n
+		}
+		if ctEnd > n {
+			ctEnd = n
+		}
+		if ctStart > tailEnd {
 			h.Write(p.raw[tailEnd:ctStart])
 		}
-		if ctEnd < len(p.raw) {
+		if ctEnd < n {
 			h.Write(p.raw[ctEnd:])
 		}
-	} else if tailEnd < len(p.raw) {
+	} else if tailEnd < n {
 		h.Write(p.raw[tailEnd:])
 	}
 	// The WIN_CERTIFICATE table is 8-byte aligned; zero bytes
@@ -155,9 +191,12 @@ func (p *PE) AuthenticodeDigest(h hash.Hash) []byte {
 	// toward the Authenticode hash. Hash that padding here so the
 	// digest is invariant under signing — computing the digest before
 	// embedding equals computing it after.
-	imgEnd := len(p.raw)
+	imgEnd := n
 	if p.certTableVA > 0 && p.certTableSize > 0 {
 		imgEnd = int(p.certTableVA)
+		if imgEnd > n {
+			imgEnd = n
+		}
 	}
 	for imgEnd%8 != 0 {
 		h.Write([]byte{0})
