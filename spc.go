@@ -21,8 +21,12 @@ var (
 	oidContentType   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 3}
 	oidMessageDigest = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 4}
 
-	// RFC3161 signature-time-stamp unsigned attribute.
-	oidTimestampToken = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 14}
+	// Microsoft's Authenticode-specific OID for an RFC 3161 counter
+	// signature carried as a SignerInfo unsigned attribute. The
+	// CMS-standard id-smime-aa-timeStampToken (1.2.840.113549.1.9.16.2.14)
+	// is *not* what Authenticode verifiers (signtool, osslsigncode) look
+	// for; they want SPC_RFC3161_OBJID below.
+	oidTimestampToken = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 311, 3, 3, 1}
 
 	// ECDSA signature algorithm OIDs (the with-SHA-* form embeds the
 	// hash; we pick the right one based on the digest used).

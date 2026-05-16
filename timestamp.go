@@ -44,7 +44,9 @@ type timeStampResp struct {
 // RequestTimestamp asks an RFC 3161 Time-Stamp Authority to timestamp
 // the given signature bytes. It returns the raw TimeStampToken (a CMS
 // ContentInfo) ready for embedding as the value of the
-// id-aa-signatureTimeStampToken unsigned attribute on a SignerInfo.
+// SPC_RFC3161_OBJID (1.3.6.1.4.1.311.3.3.1) unsigned attribute on a
+// SignerInfo — the Microsoft-Authenticode-specific carrier that
+// signtool / osslsigncode actually parse.
 //
 // The TSA URL must accept POSTs with Content-Type
 // application/timestamp-query (the standard).
@@ -111,8 +113,8 @@ func RequestTimestamp(ctx context.Context, tsaURL string, signature []byte, h cr
 }
 
 // buildUnsignedAttrsWithTimestamp wraps an RFC 3161 TimeStampToken
-// inside the id-aa-signatureTimeStampToken unsigned attribute,
-// IMPLICIT [1]-tagged so it can drop into SignerInfo.UnsignedAttrs.
+// inside Microsoft's SPC_RFC3161_OBJID unsigned attribute, IMPLICIT
+// [1]-tagged so it can drop into SignerInfo.UnsignedAttrs.
 func buildUnsignedAttrsWithTimestamp(tstToken []byte) ([]byte, error) {
 	attr := attribute{
 		Type:   oidTimestampToken,

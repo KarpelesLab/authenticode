@@ -146,7 +146,7 @@ func TestRequestTimestampContextCancel(t *testing.T) {
 }
 
 // TestSignWithTSAEmbedsToken drives a full Sign() with the stub TSA
-// URL and asserts the signed PE carries id-aa-signatureTimeStampToken
+// URL and asserts the signed PE carries SPC_RFC3161_OBJID
 // in the SignerInfo's unsigned attrs.
 func TestSignWithTSAEmbedsToken(t *testing.T) {
 	const sentinelStr = "STUB-TOKEN-PAYLOAD"
@@ -173,9 +173,9 @@ func TestSignWithTSAEmbedsToken(t *testing.T) {
 	if !bytes.Contains(si.UnsignedAttrs.FullBytes, tokenBytes) {
 		t.Fatal("token bytes not found in UnsignedAttrs")
 	}
-	// And that the OID for id-aa-signatureTimeStampToken appears.
+	// And that the OID for SPC_RFC3161_OBJID appears.
 	oidDER, _ := asn1.Marshal(oidTimestampToken)
 	if !bytes.Contains(si.UnsignedAttrs.FullBytes, oidDER) {
-		t.Fatal("id-aa-signatureTimeStampToken OID missing from UnsignedAttrs")
+		t.Fatal("SPC_RFC3161_OBJID OID missing from UnsignedAttrs")
 	}
 }

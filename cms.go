@@ -22,8 +22,9 @@ type SignOptions struct {
 
 	// TSAURL, if non-empty, requests an RFC 3161 timestamp from the
 	// given Time-Stamp Authority over HTTP and embeds the resulting
-	// token under id-aa-signatureTimeStampToken in the SignerInfo's
-	// unsigned attributes.
+	// token under SPC_RFC3161_OBJID (1.3.6.1.4.1.311.3.3.1) in the
+	// SignerInfo's unsigned attributes — the OID Authenticode
+	// verifiers (signtool, osslsigncode) look up.
 	TSAURL string
 
 	// Context governs the TSA HTTP call. Defaults to
