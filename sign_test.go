@@ -1,6 +1,7 @@
 package authenticode
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -219,6 +220,9 @@ func TestSignSelfSignedOsslsigncode(t *testing.T) {
 	t.Logf("osslsigncode output:\n%s", out)
 	if err != nil {
 		t.Fatalf("osslsigncode verify failed: %v", err)
+	}
+	if bytes.Contains(out, []byte("invalid PE checksum")) {
+		t.Fatal("osslsigncode reported an invalid PE checksum")
 	}
 }
 

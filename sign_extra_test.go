@@ -185,6 +185,9 @@ func TestSignMatrixOsslsigncode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("osslsigncode verify failed: %v", err)
 			}
+			if bytes.Contains(out, []byte("invalid PE checksum")) {
+				t.Fatal("osslsigncode reported an invalid PE checksum")
+			}
 		})
 	}
 }

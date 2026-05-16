@@ -35,7 +35,6 @@ signed, err := authenticode.Sign(peBytes, signer, authenticode.SignOptions{
 ## Status
 
 - ECDSA leaf certs only (P-256, P-384, P-521); RSA leaf support and richer compatibility tests are open follow-ups.
-- The PE optional-header `CheckSum` field is left as-is — most verifiers print a warning but accept the signature regardless.
 
 ## License
 

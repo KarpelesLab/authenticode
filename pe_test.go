@@ -3,9 +3,11 @@ package authenticode
 import (
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/binary"
 	"encoding/hex"
 	"hash"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -38,5 +40,45 @@ func TestAuthenticodeDigestStable(t *testing.T) {
 			}
 			t.Logf("%s %s: %s", path, hf.name, hex.EncodeToString(d1))
 		}
+	}
+}
+
+// TestPEChecksumMatchesFixture asserts that peChecksum recreates the
+// CheckSum value already stored in testdata/hello.exe — i.e. the
+// algorithm agrees with whatever toolchain originally produced the
+// binary (and with Microsoft's CheckSumMappedFile).
+func TestPEChecksumMatchesFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "hello.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lfanew := int(binary.LittleEndian.Uint32(data[60:64]))
+	csOff := lfanew + 4 + 20 + 64 // PE sig (4) + COFF (20) + offset to CheckSum (64)
+	stored := binary.LittleEndian.Uint32(data[csOff : csOff+4])
+	got := peChecksum(data, csOff)
+	if got != stored {
+		t.Fatalf("checksum mismatch: stored=%08X computed=%08X", stored, got)
+	}
+}
+
+// TestSignProducesValidChecksum signs the fixture, then verifies the
+// stored CheckSum in the output equals peChecksum recomputed over the
+// same bytes — i.e. EmbedSignature actually populates the field.
+func TestSignProducesValidChecksum(t *testing.T) {
+	pe, err := os.ReadFile(filepath.Join("testdata", "hello.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := Parse(pe)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	signed := p.EmbedSignature([]byte{0x30, 0x00}) // any opaque blob
+	stored := binary.LittleEndian.Uint32(signed[p.checksumOff : p.checksumOff+4])
+	if stored == 0 {
+		t.Fatal("checksum field still zero after EmbedSignature")
+	}
+	if got := peChecksum(signed, p.checksumOff); got != stored {
+		t.Fatalf("checksum self-consistency: stored=%08X recomputed=%08X", stored, got)
 	}
 }

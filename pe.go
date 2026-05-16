@@ -253,7 +253,45 @@ func (p *PE) EmbedSignature(cms []byte) []byte {
 	// Update the cert-table data directory entry in place.
 	binary.LittleEndian.PutUint32(out[p.certDirEntryOff:p.certDirEntryOff+4], uint32(winCertOffset))
 	binary.LittleEndian.PutUint32(out[p.certDirEntryOff+4:p.certDirEntryOff+8], dwLength)
+
+	// Recompute the optional-header CheckSum over the full file, with
+	// the four checksum bytes treated as zero. Writing it last keeps
+	// the field consistent with the cert-table entry and trailing
+	// WIN_CERTIFICATE blob we just appended.
+	cs := peChecksum(out, p.checksumOff)
+	binary.LittleEndian.PutUint32(out[p.checksumOff:p.checksumOff+4], cs)
 	return out
+}
+
+// peChecksum implements Microsoft's CheckSumMappedFile algorithm:
+// fold-add of every 16-bit little-endian word, plus the file length.
+// Bytes [csOff, csOff+4) — the checksum field itself — are treated as
+// zero so the result is the value to *store* into that field.
+func peChecksum(data []byte, csOff int) uint32 {
+	var sum uint32
+	n := len(data)
+	i := 0
+	for ; i+1 < n; i += 2 {
+		b0, b1 := uint32(data[i]), uint32(data[i+1])
+		if i >= csOff && i < csOff+4 {
+			b0 = 0
+		}
+		if i+1 >= csOff && i+1 < csOff+4 {
+			b1 = 0
+		}
+		sum += b0 | b1<<8
+		sum = (sum & 0xFFFF) + (sum >> 16)
+	}
+	if i < n {
+		b := uint32(data[i])
+		if i >= csOff && i < csOff+4 {
+			b = 0
+		}
+		sum += b
+		sum = (sum & 0xFFFF) + (sum >> 16)
+	}
+	sum = (sum & 0xFFFF) + (sum >> 16)
+	return sum + uint32(n)
 }
 
 func bytesEqual(a, b []byte) bool {
