@@ -247,7 +247,7 @@ func decodeEmbeddedSpc(t *testing.T, signed []byte) *spcIndirectDataContent {
 			EContentType asn1.ObjectIdentifier
 			EContent     asn1.RawValue `asn1:"explicit,tag:0,optional"`
 		}
-		Certificates asn1.RawValue `asn1:"tag:0,implicit,optional"`
+		Certificates asn1.RawValue   `asn1:"tag:0,implicit,optional"`
 		SignerInfos  []asn1.RawValue `asn1:"set"`
 	}
 	if _, err := asn1.Unmarshal(ci.Content.Bytes, &sd); err != nil {
@@ -261,8 +261,8 @@ func decodeEmbeddedSpc(t *testing.T, signed []byte) *spcIndirectDataContent {
 }
 
 type embeddedSignerInfo struct {
-	Version            int
-	SID                struct {
+	Version int
+	SID     struct {
 		Issuer       asn1.RawValue
 		SerialNumber *big.Int
 	}

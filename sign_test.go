@@ -26,9 +26,9 @@ type selfSignedSigner struct {
 	chain []*x509.Certificate
 }
 
-func (s *selfSignedSigner) Public() crypto.PublicKey                { return s.key.Public() }
-func (s *selfSignedSigner) Certificate() *x509.Certificate          { return s.cert }
-func (s *selfSignedSigner) CertificateChain() []*x509.Certificate   { return s.chain }
+func (s *selfSignedSigner) Public() crypto.PublicKey              { return s.key.Public() }
+func (s *selfSignedSigner) Certificate() *x509.Certificate        { return s.cert }
+func (s *selfSignedSigner) CertificateChain() []*x509.Certificate { return s.chain }
 func (s *selfSignedSigner) Sign(rnd io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
 	return ecdsa.SignASN1(rnd, s.key, digest)
 }
@@ -40,12 +40,12 @@ func newSelfSignedSigner(t *testing.T, curve elliptic.Curve, hash crypto.Hash) *
 		t.Fatal(err)
 	}
 	tpl := &x509.Certificate{
-		SerialNumber: big.NewInt(0xC0DE),
-		Subject:      pkix.Name{CommonName: "authenticode self-signed test"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+		SerialNumber:       big.NewInt(0xC0DE),
+		Subject:            pkix.Name{CommonName: "authenticode self-signed test"},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(time.Hour),
+		KeyUsage:           x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
 		SignatureAlgorithm: x509.ECDSAWithSHA384,
 	}
 	if hash == crypto.SHA256 {
@@ -137,8 +137,8 @@ func TestSignSelfSignedRoundTrip(t *testing.T) {
 		}
 		Certificates asn1.RawValue `asn1:"tag:0,implicit,optional"`
 		SignerInfos  []struct {
-			Version            int
-			SID                struct {
+			Version int
+			SID     struct {
 				Issuer       asn1.RawValue
 				SerialNumber *big.Int
 			}
