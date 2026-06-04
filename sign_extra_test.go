@@ -5,9 +5,12 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/asn1"
+	"hash"
 	"math/big"
 	"os"
 	"os/exec"
@@ -206,19 +209,77 @@ func TestReSignReplacesExistingTable(t *testing.T) {
 // curve + hash combination we advertise.
 func TestSignMatrix(t *testing.T) {
 	cases := []struct {
-		name  string
-		curve elliptic.Curve
-		hash  crypto.Hash
-		oid   asn1.ObjectIdentifier
+		name   string
+		newSig func(*testing.T) (Signer, crypto.PublicKey)
+		hash   crypto.Hash
+		oid    asn1.ObjectIdentifier
+		newH   func() hash.Hash
 	}{
-		{"P256-SHA256", elliptic.P256(), crypto.SHA256, oidECDSAWithSHA256},
-		{"P384-SHA384", elliptic.P384(), crypto.SHA384, oidECDSAWithSHA384},
-		{"P521-SHA512", elliptic.P521(), crypto.SHA512, oidECDSAWithSHA512},
+		{
+			name: "P256-SHA256",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+				return s, s.Public()
+			},
+			hash: crypto.SHA256,
+			oid:  oidECDSAWithSHA256,
+			newH: sha256.New,
+		},
+		{
+			name: "P384-SHA384",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedSigner(t, elliptic.P384(), crypto.SHA384)
+				return s, s.Public()
+			},
+			hash: crypto.SHA384,
+			oid:  oidECDSAWithSHA384,
+			newH: sha512.New384,
+		},
+		{
+			name: "P521-SHA512",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedSigner(t, elliptic.P521(), crypto.SHA512)
+				return s, s.Public()
+			},
+			hash: crypto.SHA512,
+			oid:  oidECDSAWithSHA512,
+			newH: sha512.New,
+		},
+		{
+			name: "RSA-SHA256",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedRSASigner(t, crypto.SHA256)
+				return s, s.Public()
+			},
+			hash: crypto.SHA256,
+			oid:  oidSHA256WithRSA,
+			newH: sha256.New,
+		},
+		{
+			name: "RSA-SHA384",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedRSASigner(t, crypto.SHA384)
+				return s, s.Public()
+			},
+			hash: crypto.SHA384,
+			oid:  oidSHA384WithRSA,
+			newH: sha512.New384,
+		},
+		{
+			name: "RSA-SHA512",
+			newSig: func(t *testing.T) (Signer, crypto.PublicKey) {
+				s := newSelfSignedRSASigner(t, crypto.SHA512)
+				return s, s.Public()
+			},
+			hash: crypto.SHA512,
+			oid:  oidSHA512WithRSA,
+			newH: sha512.New,
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			signer := newSelfSignedSigner(t, tc.curve, tc.hash)
+			signer, pub := tc.newSig(t)
 			pe := loadHelloPE(t)
 			signed, err := Sign(pe, signer, SignOptions{Hash: tc.hash})
 			if err != nil {
@@ -231,10 +292,22 @@ func TestSignMatrix(t *testing.T) {
 			// Verify the SignerInfo signature against the SET-form of the
 			// signed attributes.
 			setForSigning := append([]byte{0x31}, si.SignedAttrs.FullBytes[1:]...)
-			hh := tc.hash.New()
+			hh := tc.newH()
 			hh.Write(setForSigning)
-			if !ecdsa.VerifyASN1(&signer.key.PublicKey, hh.Sum(nil), si.Signature) {
-				t.Fatal("SignerInfo signature did not verify")
+			switch pub := pub.(type) {
+			case *ecdsa.PublicKey:
+				if !ecdsa.VerifyASN1(pub, hh.Sum(nil), si.Signature) {
+					t.Fatal("SignerInfo signature did not verify")
+				}
+			case *rsa.PublicKey:
+				if err := rsa.VerifyPKCS1v15(pub, tc.hash, hh.Sum(nil), si.Signature); err != nil {
+					t.Fatalf("SignerInfo signature did not verify: %v", err)
+				}
+				if len(si.SignatureAlgorithm.Parameters.FullBytes) == 0 {
+					t.Fatal("RSA signature algorithm parameters missing NULL")
+				}
+			default:
+				t.Fatalf("unexpected public key type %T", pub)
 			}
 		})
 	}
@@ -248,18 +321,47 @@ func TestSignMatrixOsslsigncode(t *testing.T) {
 		t.Skip("osslsigncode not installed")
 	}
 	cases := []struct {
-		name  string
-		curve elliptic.Curve
-		hash  crypto.Hash
+		name   string
+		newSig func(*testing.T) (Signer, *x509.Certificate)
+		hash   crypto.Hash
 	}{
-		{"P256-SHA256", elliptic.P256(), crypto.SHA256},
-		{"P384-SHA384", elliptic.P384(), crypto.SHA384},
-		{"P521-SHA512", elliptic.P521(), crypto.SHA512},
+		{
+			name: "P256-SHA256",
+			newSig: func(t *testing.T) (Signer, *x509.Certificate) {
+				s := newSelfSignedSigner(t, elliptic.P256(), crypto.SHA256)
+				return s, s.cert
+			},
+			hash: crypto.SHA256,
+		},
+		{
+			name: "P384-SHA384",
+			newSig: func(t *testing.T) (Signer, *x509.Certificate) {
+				s := newSelfSignedSigner(t, elliptic.P384(), crypto.SHA384)
+				return s, s.cert
+			},
+			hash: crypto.SHA384,
+		},
+		{
+			name: "P521-SHA512",
+			newSig: func(t *testing.T) (Signer, *x509.Certificate) {
+				s := newSelfSignedSigner(t, elliptic.P521(), crypto.SHA512)
+				return s, s.cert
+			},
+			hash: crypto.SHA512,
+		},
+		{
+			name: "RSA-SHA256",
+			newSig: func(t *testing.T) (Signer, *x509.Certificate) {
+				s := newSelfSignedRSASigner(t, crypto.SHA256)
+				return s, s.cert
+			},
+			hash: crypto.SHA256,
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			signer := newSelfSignedSigner(t, tc.curve, tc.hash)
+			signer, caCert := tc.newSig(t)
 			pe := loadHelloPE(t)
 			signed, err := Sign(pe, signer, SignOptions{Hash: tc.hash})
 			if err != nil {
@@ -271,7 +373,7 @@ func TestSignMatrixOsslsigncode(t *testing.T) {
 			if err := os.WriteFile(exePath, signed, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := writePEM(caPath, signer.cert.Raw); err != nil {
+			if err := writePEM(caPath, caCert.Raw); err != nil {
 				t.Fatal(err)
 			}
 			out, err := exec.Command("osslsigncode", "verify",
