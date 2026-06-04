@@ -35,6 +35,11 @@ var (
 	oidECDSAWithSHA384 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 3}
 	oidECDSAWithSHA512 = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 4}
 
+	// RSA PKCS#1 v1.5 signature algorithm OIDs.
+	oidSHA256WithRSA = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
+	oidSHA384WithRSA = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}
+	oidSHA512WithRSA = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 13}
+
 	oidSHA256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidSHA384 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
 	oidSHA512 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}
@@ -62,6 +67,19 @@ func ecdsaWithHashOID(h crypto.Hash) (asn1.ObjectIdentifier, error) {
 		return oidECDSAWithSHA384, nil
 	case crypto.SHA512:
 		return oidECDSAWithSHA512, nil
+	}
+	return nil, fmt.Errorf("authenticode: unsupported hash %v", h)
+}
+
+// rsaWithHashOID returns the sha*-withRSAEncryption signature OID matching h.
+func rsaWithHashOID(h crypto.Hash) (asn1.ObjectIdentifier, error) {
+	switch h {
+	case crypto.SHA256:
+		return oidSHA256WithRSA, nil
+	case crypto.SHA384:
+		return oidSHA384WithRSA, nil
+	case crypto.SHA512:
+		return oidSHA512WithRSA, nil
 	}
 	return nil, fmt.Errorf("authenticode: unsupported hash %v", h)
 }

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
@@ -101,7 +103,7 @@ type attribute struct {
 // around the supplied SpcIndirectDataContent. The signing key is
 // driven through the standard crypto.Signer interface — pass an
 // idprime.Signer (or any other implementation) and the resulting
-// SignedData carries an ECDSA signature ready for embedding in a PE.
+// SignedData carries a CMS signature ready for embedding in a PE.
 //
 // chain must start with the leaf certificate that matches signer's
 // public key; subsequent entries (intermediates) are embedded as-is.
@@ -125,7 +127,7 @@ func BuildSignedData(spc []byte, signer crypto.Signer, chain []*x509.Certificate
 	if err != nil {
 		return nil, err
 	}
-	sigOID, err := ecdsaWithHashOID(h)
+	sigAlg, err := signatureAlgorithmForSigner(signer, h)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +189,7 @@ func BuildSignedData(spc []byte, signer crypto.Signer, chain []*x509.Certificate
 		},
 		DigestAlgorithm:    newAlgorithmIDWithNullParams(hOID),
 		SignedAttrs:        asn1.RawValue{FullBytes: signedAttrs},
-		SignatureAlgorithm: newAlgorithmIDNoParams(sigOID),
+		SignatureAlgorithm: sigAlg,
 		Signature:          signature,
 		UnsignedAttrs:      unsignedAttrs,
 	}
@@ -223,6 +225,25 @@ func BuildSignedData(spc []byte, signer crypto.Signer, chain []*x509.Certificate
 		Content:     asn1.RawValue{FullBytes: tlv(0xA0, sdDER)},
 	}
 	return asn1.Marshal(ci)
+}
+
+func signatureAlgorithmForSigner(signer crypto.Signer, h crypto.Hash) (algorithmIdentifier, error) {
+	switch signer.Public().(type) {
+	case *ecdsa.PublicKey:
+		oid, err := ecdsaWithHashOID(h)
+		if err != nil {
+			return algorithmIdentifier{}, err
+		}
+		return newAlgorithmIDNoParams(oid), nil
+	case *rsa.PublicKey:
+		oid, err := rsaWithHashOID(h)
+		if err != nil {
+			return algorithmIdentifier{}, err
+		}
+		return newAlgorithmIDWithNullParams(oid), nil
+	default:
+		return algorithmIdentifier{}, fmt.Errorf("authenticode: unsupported signer public key %T", signer.Public())
+	}
 }
 
 // buildSignedAttrs builds the SignedAttributes SET *as an IMPLICIT [0]

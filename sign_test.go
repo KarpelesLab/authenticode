@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -20,9 +21,9 @@ import (
 )
 
 // selfSignedSigner is a minimal authenticode.Signer implementation
-// using crypto/ecdsa for unit-test signing — no token required.
+// using an in-memory private key for unit-test signing — no token required.
 type selfSignedSigner struct {
-	key   *ecdsa.PrivateKey
+	key   crypto.Signer
 	cert  *x509.Certificate
 	chain []*x509.Certificate
 }
@@ -30,8 +31,8 @@ type selfSignedSigner struct {
 func (s *selfSignedSigner) Public() crypto.PublicKey              { return s.key.Public() }
 func (s *selfSignedSigner) Certificate() *x509.Certificate        { return s.cert }
 func (s *selfSignedSigner) CertificateChain() []*x509.Certificate { return s.chain }
-func (s *selfSignedSigner) Sign(rnd io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
-	return ecdsa.SignASN1(rnd, s.key, digest)
+func (s *selfSignedSigner) Sign(rnd io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return s.key.Sign(rnd, digest, opts)
 }
 
 func newSelfSignedSigner(t *testing.T, curve elliptic.Curve, hash crypto.Hash) *selfSignedSigner {
@@ -55,7 +56,43 @@ func newSelfSignedSigner(t *testing.T, curve elliptic.Curve, hash crypto.Hash) *
 	if hash == crypto.SHA512 {
 		tpl.SignatureAlgorithm = x509.ECDSAWithSHA512
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &selfSignedSigner{
+		key:   key,
+		cert:  cert,
+		chain: []*x509.Certificate{cert},
+	}
+}
+
+func newSelfSignedRSASigner(t *testing.T, hash crypto.Hash) *selfSignedSigner {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 3072)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{
+		SerialNumber:       big.NewInt(0xC0DF),
+		Subject:            pkix.Name{CommonName: "authenticode self-signed RSA test"},
+		NotBefore:          time.Now().Add(-time.Hour),
+		NotAfter:           time.Now().Add(time.Hour),
+		KeyUsage:           x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:        []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+		SignatureAlgorithm: x509.SHA384WithRSA,
+	}
+	if hash == crypto.SHA256 {
+		tpl.SignatureAlgorithm = x509.SHA256WithRSA
+	}
+	if hash == crypto.SHA512 {
+		tpl.SignatureAlgorithm = x509.SHA512WithRSA
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, key.Public(), key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +222,11 @@ func TestSignSelfSignedRoundTrip(t *testing.T) {
 	h := sha512.New384()
 	h.Write(setForSigning)
 	hashed := h.Sum(nil)
-	if !ecdsa.VerifyASN1(&signer.key.PublicKey, hashed, si.Signature) {
+	pub, ok := signer.Public().(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key type = %T, want *ecdsa.PublicKey", signer.Public())
+	}
+	if !ecdsa.VerifyASN1(pub, hashed, si.Signature) {
 		t.Fatal("SignerInfo signature failed to verify against signed-attrs hash")
 	}
 

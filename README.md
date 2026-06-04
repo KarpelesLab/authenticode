@@ -34,7 +34,7 @@ signed, err := authenticode.Sign(peBytes, signer, authenticode.SignOptions{
 
 ## Status
 
-- ECDSA leaf certs only (P-256, P-384, P-521); RSA leaf support and richer compatibility tests are open follow-ups.
+- Leaf signing keys: ECDSA (P-256, P-384, P-521) and RSA PKCS#1 v1.5 with SHA-256 / SHA-384 / SHA-512.
 
 ## License
 
